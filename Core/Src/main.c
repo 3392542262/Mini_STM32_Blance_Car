@@ -106,28 +106,7 @@ int main(void)
 
   while (1)
   {
-    /// 每 100ms 发送一次停止指令，保持轮子停止（Keep the wheels stopped）.
-    uint32_t now = HAL_GetTick();
 
-    if ((now - stop_tick) >= 100U)
-    {
-      Motor_Stop();
-      stop_tick = now;
-    }
-
-    /// 一次性读取左右轮编码器与速度，保证数据来自同一快照（Read snapshot）.
-    int32_t enc_total[MOTOR_CH_COUNT];
-    int32_t enc_delta[MOTOR_CH_COUNT];
-    float speeds[MOTOR_CH_COUNT];
-
-    Motor_Get_Snapshot(enc_total, enc_delta, speeds);
-
-    test_left_enc = enc_total[MOTOR_M1];
-    test_right_enc = enc_total[MOTOR_M3];
-    test_left_delta = enc_delta[MOTOR_M1];
-    test_right_delta = enc_delta[MOTOR_M3];
-    left_speed = speeds[MOTOR_M1];
-    right_speed = speeds[MOTOR_M3];
 
     /* USER CODE END WHILE */
 
