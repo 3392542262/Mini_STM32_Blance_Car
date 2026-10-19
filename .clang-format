@@ -1,0 +1,11 @@
+# 2-space indentation, opening braces on the same line (K&R).
+BasedOnStyle: LLVM
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+BreakBeforeBraces: Attach
+ColumnLimit: 0
+AllowShortFunctionsOnASingleLine: None
+IndentCaseLabels: false
+PointerAlignment: Right
+SortIncludes: Never

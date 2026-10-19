@@ -1,0 +1,28 @@
+# 构建输出
+build/
+mx.scratch
+
+# IDE / 系统文件
+.settings/
+.vs/
+.DS_Store
+Thumbs.db
+
+# 编译产物
+*.elf
+*.bin
+*.hex
+*.map
+*.o
+*.d
+*.su
+
+# 未使用的 CMSIS 组件（本项目编译不需要）
+Drivers/CMSIS/Lib/
+Drivers/CMSIS/DSP/
+Drivers/CMSIS/NN/
+Drivers/CMSIS/RTOS/
+Drivers/CMSIS/RTOS2/
+Drivers/CMSIS/Core_A/
+Drivers/CMSIS/Core/Template/
+Drivers/CMSIS/docs/
