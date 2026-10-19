@@ -56,6 +56,8 @@ flowchart LR
 - 原电机 PWM/方向与编码器引脚均不再由 STM32 使用，由串口驱动板负责
 - OLED、按键、LED、MPU6050、电压检测、超声波等尚未在 CubeMX 中初始化
 
+原理图与资源分配表见 [`docs/schematics/`](docs/schematics/)。
+
 ## 通信协议
 
 ### 下行指令（STM32 → 驱动板）
