@@ -1,0 +1,561 @@
+#include "main.h"
+#include "oled.h"
+
+#include <stdarg.h>
+#include <stdio.h>
+
+/// 引脚分配：4 线软件 SPI（Pin map of the 4-wire software SPI）.
+#define OLED_SCK_PORT GPIOB
+#define OLED_SCK_PIN GPIO_PIN_5
+#define OLED_SDA_PORT GPIOB
+#define OLED_SDA_PIN GPIO_PIN_4
+#define OLED_RES_PORT GPIOB
+#define OLED_RES_PIN GPIO_PIN_3
+#define OLED_DC_PORT GPIOA
+#define OLED_DC_PIN GPIO_PIN_15
+
+/// 左右镜像时改成 0（Set to 0 to mirror the picture horizontally）.
+#define OLED_SEGMENT_REMAP 1
+
+/// 上下颠倒时改成 0（Set to 0 to flip the picture vertically）.
+#define OLED_COM_SCAN_DEC 1
+
+/// 电荷泵：模块内部没有升压电路时必须为 1（Enable the internal charge pump）.
+#define OLED_CHARGE_PUMP 1
+
+/// 复位时序，单位 ms（Reset pulse timing）.
+#define OLED_RESET_LOW_MS 20U
+#define OLED_RESET_HIGH_MS 20U
+
+/// 放大倍数上限（Max scale factor）.
+#define OLED_MAX_SCALE 4
+
+/// 8x8 ASCII 字模，覆盖 0x20~0x7E；每字节为一行像素，bit0 在最左侧.
+///
+/// 字模取自 dhepper/font8x8 的 font8x8_basic（Public Domain）.
+static const uint8_t s_font[95][8] = {
+    { 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 }, /* 0x20 ' ' */
+    { 0x18,0x3C,0x3C,0x18,0x18,0x00,0x18,0x00 }, /* 0x21 '!' */
+    { 0x36,0x36,0x00,0x00,0x00,0x00,0x00,0x00 }, /* 0x22 '"' */
+    { 0x36,0x36,0x7F,0x36,0x7F,0x36,0x36,0x00 }, /* 0x23 '#' */
+    { 0x0C,0x3E,0x03,0x1E,0x30,0x1F,0x0C,0x00 }, /* 0x24 '$' */
+    { 0x00,0x63,0x33,0x18,0x0C,0x66,0x63,0x00 }, /* 0x25 '%' */
+    { 0x1C,0x36,0x1C,0x6E,0x3B,0x33,0x6E,0x00 }, /* 0x26 '&' */
+    { 0x06,0x06,0x03,0x00,0x00,0x00,0x00,0x00 }, /* 0x27 ''' */
+    { 0x18,0x0C,0x06,0x06,0x06,0x0C,0x18,0x00 }, /* 0x28 '(' */
+    { 0x06,0x0C,0x18,0x18,0x18,0x0C,0x06,0x00 }, /* 0x29 ')' */
+    { 0x00,0x66,0x3C,0xFF,0x3C,0x66,0x00,0x00 }, /* 0x2A '*' */
+    { 0x00,0x0C,0x0C,0x3F,0x0C,0x0C,0x00,0x00 }, /* 0x2B '+' */
+    { 0x00,0x00,0x00,0x00,0x00,0x0C,0x0C,0x06 }, /* 0x2C ',' */
+    { 0x00,0x00,0x00,0x3F,0x00,0x00,0x00,0x00 }, /* 0x2D '-' */
+    { 0x00,0x00,0x00,0x00,0x00,0x0C,0x0C,0x00 }, /* 0x2E '.' */
+    { 0x60,0x30,0x18,0x0C,0x06,0x03,0x01,0x00 }, /* 0x2F '/' */
+    { 0x3E,0x63,0x73,0x7B,0x6F,0x67,0x3E,0x00 }, /* 0x30 '0' */
+    { 0x0C,0x0E,0x0C,0x0C,0x0C,0x0C,0x3F,0x00 }, /* 0x31 '1' */
+    { 0x1E,0x33,0x30,0x1C,0x06,0x33,0x3F,0x00 }, /* 0x32 '2' */
+    { 0x1E,0x33,0x30,0x1C,0x30,0x33,0x1E,0x00 }, /* 0x33 '3' */
+    { 0x38,0x3C,0x36,0x33,0x7F,0x30,0x78,0x00 }, /* 0x34 '4' */
+    { 0x3F,0x03,0x1F,0x30,0x30,0x33,0x1E,0x00 }, /* 0x35 '5' */
+    { 0x1C,0x06,0x03,0x1F,0x33,0x33,0x1E,0x00 }, /* 0x36 '6' */
+    { 0x3F,0x33,0x30,0x18,0x0C,0x0C,0x0C,0x00 }, /* 0x37 '7' */
+    { 0x1E,0x33,0x33,0x1E,0x33,0x33,0x1E,0x00 }, /* 0x38 '8' */
+    { 0x1E,0x33,0x33,0x3E,0x30,0x18,0x0E,0x00 }, /* 0x39 '9' */
+    { 0x00,0x0C,0x0C,0x00,0x00,0x0C,0x0C,0x00 }, /* 0x3A ':' */
+    { 0x00,0x0C,0x0C,0x00,0x00,0x0C,0x0C,0x06 }, /* 0x3B ';' */
+    { 0x18,0x0C,0x06,0x03,0x06,0x0C,0x18,0x00 }, /* 0x3C '<' */
+    { 0x00,0x00,0x3F,0x00,0x00,0x3F,0x00,0x00 }, /* 0x3D '=' */
+    { 0x06,0x0C,0x18,0x30,0x18,0x0C,0x06,0x00 }, /* 0x3E '>' */
+    { 0x1E,0x33,0x30,0x18,0x0C,0x00,0x0C,0x00 }, /* 0x3F '?' */
+    { 0x3E,0x63,0x7B,0x7B,0x7B,0x03,0x1E,0x00 }, /* 0x40 '@' */
+    { 0x0C,0x1E,0x33,0x33,0x3F,0x33,0x33,0x00 }, /* 0x41 'A' */
+    { 0x3F,0x66,0x66,0x3E,0x66,0x66,0x3F,0x00 }, /* 0x42 'B' */
+    { 0x3C,0x66,0x03,0x03,0x03,0x66,0x3C,0x00 }, /* 0x43 'C' */
+    { 0x1F,0x36,0x66,0x66,0x66,0x36,0x1F,0x00 }, /* 0x44 'D' */
+    { 0x7F,0x46,0x16,0x1E,0x16,0x46,0x7F,0x00 }, /* 0x45 'E' */
+    { 0x7F,0x46,0x16,0x1E,0x16,0x06,0x0F,0x00 }, /* 0x46 'F' */
+    { 0x3C,0x66,0x03,0x03,0x73,0x66,0x7C,0x00 }, /* 0x47 'G' */
+    { 0x33,0x33,0x33,0x3F,0x33,0x33,0x33,0x00 }, /* 0x48 'H' */
+    { 0x1E,0x0C,0x0C,0x0C,0x0C,0x0C,0x1E,0x00 }, /* 0x49 'I' */
+    { 0x78,0x30,0x30,0x30,0x33,0x33,0x1E,0x00 }, /* 0x4A 'J' */
+    { 0x67,0x66,0x36,0x1E,0x36,0x66,0x67,0x00 }, /* 0x4B 'K' */
+    { 0x0F,0x06,0x06,0x06,0x46,0x66,0x7F,0x00 }, /* 0x4C 'L' */
+    { 0x63,0x77,0x7F,0x7F,0x6B,0x63,0x63,0x00 }, /* 0x4D 'M' */
+    { 0x63,0x67,0x6F,0x7B,0x73,0x63,0x63,0x00 }, /* 0x4E 'N' */
+    { 0x1C,0x36,0x63,0x63,0x63,0x36,0x1C,0x00 }, /* 0x4F 'O' */
+    { 0x3F,0x66,0x66,0x3E,0x06,0x06,0x0F,0x00 }, /* 0x50 'P' */
+    { 0x1E,0x33,0x33,0x33,0x3B,0x1E,0x38,0x00 }, /* 0x51 'Q' */
+    { 0x3F,0x66,0x66,0x3E,0x36,0x66,0x67,0x00 }, /* 0x52 'R' */
+    { 0x1E,0x33,0x07,0x0E,0x38,0x33,0x1E,0x00 }, /* 0x53 'S' */
+    { 0x3F,0x2D,0x0C,0x0C,0x0C,0x0C,0x1E,0x00 }, /* 0x54 'T' */
+    { 0x33,0x33,0x33,0x33,0x33,0x33,0x3F,0x00 }, /* 0x55 'U' */
+    { 0x33,0x33,0x33,0x33,0x33,0x1E,0x0C,0x00 }, /* 0x56 'V' */
+    { 0x63,0x63,0x63,0x6B,0x7F,0x77,0x63,0x00 }, /* 0x57 'W' */
+    { 0x63,0x63,0x36,0x1C,0x1C,0x36,0x63,0x00 }, /* 0x58 'X' */
+    { 0x33,0x33,0x33,0x1E,0x0C,0x0C,0x1E,0x00 }, /* 0x59 'Y' */
+    { 0x7F,0x63,0x31,0x18,0x4C,0x66,0x7F,0x00 }, /* 0x5A 'Z' */
+    { 0x1E,0x06,0x06,0x06,0x06,0x06,0x1E,0x00 }, /* 0x5B '[' */
+    { 0x03,0x06,0x0C,0x18,0x30,0x60,0x40,0x00 }, /* 0x5C '\' */
+    { 0x1E,0x18,0x18,0x18,0x18,0x18,0x1E,0x00 }, /* 0x5D ']' */
+    { 0x08,0x1C,0x36,0x63,0x00,0x00,0x00,0x00 }, /* 0x5E '^' */
+    { 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF }, /* 0x5F '_' */
+    { 0x0C,0x0C,0x18,0x00,0x00,0x00,0x00,0x00 }, /* 0x60 '`' */
+    { 0x00,0x00,0x1E,0x30,0x3E,0x33,0x6E,0x00 }, /* 0x61 'a' */
+    { 0x07,0x06,0x06,0x3E,0x66,0x66,0x3B,0x00 }, /* 0x62 'b' */
+    { 0x00,0x00,0x1E,0x33,0x03,0x33,0x1E,0x00 }, /* 0x63 'c' */
+    { 0x38,0x30,0x30,0x3E,0x33,0x33,0x6E,0x00 }, /* 0x64 'd' */
+    { 0x00,0x00,0x1E,0x33,0x3F,0x03,0x1E,0x00 }, /* 0x65 'e' */
+    { 0x1C,0x36,0x06,0x0F,0x06,0x06,0x0F,0x00 }, /* 0x66 'f' */
+    { 0x00,0x00,0x6E,0x33,0x33,0x3E,0x30,0x1F }, /* 0x67 'g' */
+    { 0x07,0x06,0x36,0x6E,0x66,0x66,0x67,0x00 }, /* 0x68 'h' */
+    { 0x0C,0x00,0x0E,0x0C,0x0C,0x0C,0x1E,0x00 }, /* 0x69 'i' */
+    { 0x30,0x00,0x30,0x30,0x30,0x33,0x33,0x1E }, /* 0x6A 'j' */
+    { 0x07,0x06,0x66,0x36,0x1E,0x36,0x67,0x00 }, /* 0x6B 'k' */
+    { 0x0E,0x0C,0x0C,0x0C,0x0C,0x0C,0x1E,0x00 }, /* 0x6C 'l' */
+    { 0x00,0x00,0x33,0x7F,0x7F,0x6B,0x63,0x00 }, /* 0x6D 'm' */
+    { 0x00,0x00,0x1F,0x33,0x33,0x33,0x33,0x00 }, /* 0x6E 'n' */
+    { 0x00,0x00,0x1E,0x33,0x33,0x33,0x1E,0x00 }, /* 0x6F 'o' */
+    { 0x00,0x00,0x3B,0x66,0x66,0x3E,0x06,0x0F }, /* 0x70 'p' */
+    { 0x00,0x00,0x6E,0x33,0x33,0x3E,0x30,0x78 }, /* 0x71 'q' */
+    { 0x00,0x00,0x3B,0x6E,0x66,0x06,0x0F,0x00 }, /* 0x72 'r' */
+    { 0x00,0x00,0x3E,0x03,0x1E,0x30,0x1F,0x00 }, /* 0x73 's' */
+    { 0x08,0x0C,0x3E,0x0C,0x0C,0x2C,0x18,0x00 }, /* 0x74 't' */
+    { 0x00,0x00,0x33,0x33,0x33,0x33,0x6E,0x00 }, /* 0x75 'u' */
+    { 0x00,0x00,0x33,0x33,0x33,0x1E,0x0C,0x00 }, /* 0x76 'v' */
+    { 0x00,0x00,0x63,0x6B,0x7F,0x7F,0x36,0x00 }, /* 0x77 'w' */
+    { 0x00,0x00,0x63,0x36,0x1C,0x36,0x63,0x00 }, /* 0x78 'x' */
+    { 0x00,0x00,0x33,0x33,0x33,0x3E,0x30,0x1F }, /* 0x79 'y' */
+    { 0x00,0x00,0x3F,0x19,0x0C,0x26,0x3F,0x00 }, /* 0x7A 'z' */
+    { 0x38,0x0C,0x0C,0x07,0x0C,0x0C,0x38,0x00 }, /* 0x7B '{' */
+    { 0x18,0x18,0x18,0x00,0x18,0x18,0x18,0x00 }, /* 0x7C '|' */
+    { 0x07,0x0C,0x0C,0x38,0x0C,0x0C,0x07,0x00 }, /* 0x7D '}' */
+    { 0x6E,0x3B,0x00,0x00,0x00,0x00,0x00,0x00 }, /* 0x7E '~' */
+};
+
+/* 引脚操作（Pin helpers）-----------------------------------------------------*/
+
+static void OLED_Sck_Set(void) {
+  HAL_GPIO_WritePin(OLED_SCK_PORT, OLED_SCK_PIN, GPIO_PIN_SET);
+}
+
+static void OLED_Sck_Reset(void) {
+  HAL_GPIO_WritePin(OLED_SCK_PORT, OLED_SCK_PIN, GPIO_PIN_RESET);
+}
+
+static void OLED_Sda_Set(void) {
+  HAL_GPIO_WritePin(OLED_SDA_PORT, OLED_SDA_PIN, GPIO_PIN_SET);
+}
+
+static void OLED_Sda_Reset(void) {
+  HAL_GPIO_WritePin(OLED_SDA_PORT, OLED_SDA_PIN, GPIO_PIN_RESET);
+}
+
+static void OLED_Res_Set(void) {
+  HAL_GPIO_WritePin(OLED_RES_PORT, OLED_RES_PIN, GPIO_PIN_SET);
+}
+
+static void OLED_Res_Reset(void) {
+  HAL_GPIO_WritePin(OLED_RES_PORT, OLED_RES_PIN, GPIO_PIN_RESET);
+}
+
+/// DC = 0 表示命令，DC = 1 表示显存数据（DC low = command, high = data）.
+static void OLED_Dc_Set(void) {
+  HAL_GPIO_WritePin(OLED_DC_PORT, OLED_DC_PIN, GPIO_PIN_SET);
+}
+
+static void OLED_Dc_Reset(void) {
+  HAL_GPIO_WritePin(OLED_DC_PORT, OLED_DC_PIN, GPIO_PIN_RESET);
+}
+
+/// 配置 4 个 OLED 引脚为推挽输出（Configure the four pins as push-pull outputs）.
+static void OLED_Gpio_Init(void) {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_AFIO_CLK_ENABLE();
+
+  /// PA15/PB3/PB4 上电默认是 JTAG 的 JTDI/JTDO/NJTRST，必须先关掉 JTAG
+  /// 才能当普通 GPIO 用；关掉后 SWD（PA13/PA14）仍可正常下载调试.
+  __HAL_AFIO_REMAP_SWJ_NOJTAG();
+
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+
+  GPIO_InitStruct.Pin = OLED_SCK_PIN;
+  HAL_GPIO_Init(OLED_SCK_PORT, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = OLED_SDA_PIN;
+  HAL_GPIO_Init(OLED_SDA_PORT, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = OLED_RES_PIN;
+  HAL_GPIO_Init(OLED_RES_PORT, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = OLED_DC_PIN;
+  HAL_GPIO_Init(OLED_DC_PORT, &GPIO_InitStruct);
+
+  /// 空闲电平：SCK 低、SDA 高、RES 高、DC 高（Idle levels）.
+  OLED_Sck_Reset();
+  OLED_Sda_Set();
+  OLED_Res_Set();
+  OLED_Dc_Set();
+}
+
+/// 软件 SPI 发送一个字节，高位先出（Shift out one byte, MSB first）.
+static void OLED_Write_Byte(uint8_t data) {
+  for (uint8_t i = 0; i < 8; i++) {
+    OLED_Sck_Reset();
+    if (data & 0x80u) {
+      OLED_Sda_Set();
+    } else {
+      OLED_Sda_Reset();
+    }
+    data = (uint8_t)(data << 1);
+    OLED_Sck_Set();
+  }
+}
+
+/// 发送一条命令（Send one command byte）.
+static void OLED_Write_Command(uint8_t command) {
+  OLED_Dc_Reset();
+  OLED_Write_Byte(command);
+}
+
+/// 发送一个显存数据字节（Send one display RAM byte）.
+static void OLED_Write_Data(uint8_t data) {
+  OLED_Dc_Set();
+  OLED_Write_Byte(data);
+}
+
+/// 把无符号整数转成十进制字符串，返回长度（Format an unsigned integer）.
+static uint8_t OLED_Format_Uint(char *dst, uint32_t value) {
+  char tmp[11];
+  uint8_t digits = 0;
+  uint8_t len = 0;
+
+  do {
+    tmp[digits++] = (char)('0' + (value % 10u));
+    value /= 10u;
+  } while (value != 0u && digits < sizeof(tmp));
+
+  while (digits > 0) {
+    dst[len++] = tmp[--digits];
+  }
+  dst[len] = '\0';
+  return len;
+}
+
+/// 拼接可选负号与十进制数字，cap 为缓冲区容量（Compose sign + decimal digits）.
+static uint8_t OLED_Format_Signed(char *dst, uint8_t cap, uint8_t negative,
+                                  uint32_t magnitude) {
+  char digits[12];
+  uint8_t len = 0;
+  uint8_t count = OLED_Format_Uint(digits, magnitude);
+
+  if (cap < 2) {
+    dst[0] = '\0';
+    return 0;
+  }
+  if (negative && (len + 1) < cap) {
+    dst[len++] = '-';
+  }
+  for (uint8_t i = 0; i < count && (len + 1) < cap; i++) {
+    dst[len++] = digits[i];
+  }
+  dst[len] = '\0';
+  return len;
+}
+
+/// 左侧补空格到宽度 width，cap 为缓冲区容量（Left-pad the string with spaces）.
+static void OLED_Pad(char *dst, uint8_t len, uint8_t width, uint8_t cap) {
+  uint8_t pad;
+  uint8_t i;
+
+  if (cap == 0) {
+    return;
+  }
+  if (width > (uint8_t)(cap - 1)) {
+    width = (uint8_t)(cap - 1);
+  }
+  if (width <= len) {
+    return;
+  }
+
+  pad = (uint8_t)(width - len);
+  i = len;
+  while (i > 0) {
+    dst[i + pad - 1] = dst[i - 1];
+    i--;
+  }
+  for (i = 0; i < pad; i++) {
+    dst[i] = ' ';
+  }
+  dst[len + pad] = '\0';
+}
+
+void OLED_Init(void) {
+  OLED_Gpio_Init();
+
+  /// 复位脉冲（Reset pulse）.
+  OLED_Res_Reset();
+  HAL_Delay(OLED_RESET_LOW_MS);
+  OLED_Res_Set();
+  HAL_Delay(OLED_RESET_HIGH_MS);
+
+  /// SSD1306 上电初始化序列（SSD1306 power-on sequence）.
+  OLED_Write_Command(0xAE); ///< 关显示（Display off）.
+
+  OLED_Write_Command(0xD5); ///< 时钟分频/振荡频率（Clock divide ratio）.
+  OLED_Write_Command(0x80);
+
+  OLED_Write_Command(0xA8); ///< 复用率 = 64 行（Multiplex ratio）.
+  OLED_Write_Command(0x3F);
+
+  OLED_Write_Command(0xD3); ///< 显示偏移 0（Display offset）.
+  OLED_Write_Command(0x00);
+
+  OLED_Write_Command(0x40); ///< 起始行 0（Start line）.
+
+#if OLED_CHARGE_PUMP
+  OLED_Write_Command(0x8D); ///< 电荷泵（Charge pump）.
+  OLED_Write_Command(0x14); ///< 使能内部升压（Enable）.
+#endif
+
+  OLED_Write_Command(0x20); ///< 页寻址模式（Page addressing mode）.
+  OLED_Write_Command(0x02);
+
+#if OLED_SEGMENT_REMAP
+  OLED_Write_Command(0xA1); ///< 列地址 127 -> SEG0（Segment remap）.
+#else
+  OLED_Write_Command(0xA0);
+#endif
+
+#if OLED_COM_SCAN_DEC
+  OLED_Write_Command(0xC8); ///< COM 反向扫描（COM scan dec）.
+#else
+  OLED_Write_Command(0xC0);
+#endif
+
+  OLED_Write_Command(0xDA); ///< COM 引脚硬件配置（COM pins config）.
+  OLED_Write_Command(0x12);
+
+  OLED_Write_Command(0x81); ///< 对比度（Contrast）.
+  OLED_Write_Command(0xCF);
+
+  OLED_Write_Command(0xD9); ///< 预充电周期（Pre-charge period）.
+  OLED_Write_Command(0xF1);
+
+  OLED_Write_Command(0xDB); ///< VCOMH 电压倍率（VCOMH deselect level）.
+  OLED_Write_Command(0x40);
+
+  OLED_Write_Command(0xA4); ///< 按显存内容显示（Entire display on = RAM）.
+  OLED_Write_Command(0xA6); ///< 正常显示，非反色（Normal, not inverted）.
+  OLED_Write_Command(0x2E); ///< 关闭滚动（Deactivate scroll）.
+
+  OLED_Clear();
+  OLED_Write_Command(0xAF); ///< 开显示（Display on）.
+}
+
+void OLED_Display_On(void) {
+  OLED_Write_Command(0x8D);
+  OLED_Write_Command(0x14);
+  OLED_Write_Command(0xAF);
+}
+
+void OLED_Display_Off(void) {
+  OLED_Write_Command(0x8D);
+  OLED_Write_Command(0x10);
+  OLED_Write_Command(0xAE);
+}
+
+void OLED_Set_Contrast(uint8_t contrast) {
+  OLED_Write_Command(0x81);
+  OLED_Write_Command(contrast);
+}
+
+void OLED_Clear_Page(uint8_t page) {
+  if (page >= OLED_PAGE_COUNT) {
+    return;
+  }
+
+  OLED_Set_Cursor(page, 0);
+  for (uint8_t column = 0; column < OLED_WIDTH; column++) {
+    OLED_Write_Data(0x00);
+  }
+}
+
+void OLED_Clear(void) {
+  for (uint8_t page = 0; page < OLED_PAGE_COUNT; page++) {
+    OLED_Clear_Page(page);
+  }
+}
+
+void OLED_Set_Cursor(uint8_t page, uint8_t column) {
+  if (page >= OLED_PAGE_COUNT) {
+    page = OLED_PAGE_COUNT - 1;
+  }
+  if (column >= OLED_WIDTH) {
+    column = OLED_WIDTH - 1;
+  }
+
+  OLED_Write_Command((uint8_t)(0xB0 | page));
+  OLED_Write_Command((uint8_t)(column & 0x0Fu));
+  OLED_Write_Command((uint8_t)(0x10 | ((column >> 4) & 0x0Fu)));
+}
+
+void OLED_Show_Char(uint8_t page, uint8_t column, char ch, uint8_t scale) {
+  const uint8_t *glyph;
+  uint8_t code = (uint8_t)ch;
+  uint8_t max_columns;
+  uint8_t written;
+
+  if (page >= OLED_PAGE_COUNT || column >= OLED_WIDTH) {
+    return;
+  }
+  if (scale == 0 || scale > OLED_MAX_SCALE) {
+    scale = 1;
+  }
+  if (code < 0x20 || code > 0x7E) {
+    code = (uint8_t)'?';
+  }
+
+  glyph = s_font[code - 0x20];
+  max_columns = (uint8_t)(OLED_WIDTH - column);
+
+  /// 一个字模占 scale 页，逐页、逐列展开（Expand the glyph page by page）.
+  for (uint8_t page_offset = 0; page_offset < scale; page_offset++) {
+    if ((uint8_t)(page + page_offset) >= OLED_PAGE_COUNT) {
+      return;
+    }
+
+    OLED_Set_Cursor((uint8_t)(page + page_offset), column);
+    written = 0;
+
+    for (uint8_t col = 0; col < 8; col++) {
+      uint8_t byte = 0;
+
+      for (uint8_t row = 0; row < 8; row++) {
+        uint8_t font_row = (uint8_t)((page_offset * 8u + row) / scale);
+
+        if ((glyph[font_row] >> col) & 0x01u) {
+          byte = (uint8_t)(byte | (1u << row));
+        }
+      }
+
+      for (uint8_t repeat = 0; repeat < scale; repeat++) {
+        if (written >= max_columns) {
+          break;
+        }
+        OLED_Write_Data(byte);
+        written++;
+      }
+    }
+  }
+}
+
+void OLED_Show_String(uint8_t page, uint8_t column, const char *str, uint8_t scale) {
+  uint16_t cursor;
+
+  if (str == NULL) {
+    return;
+  }
+  if (scale == 0 || scale > OLED_MAX_SCALE) {
+    scale = 1;
+  }
+
+  cursor = column;
+  while (*str != '\0' && cursor < OLED_WIDTH) {
+    OLED_Show_Char(page, (uint8_t)cursor, *str, scale);
+    cursor += (uint16_t)(8u * scale);
+    str++;
+  }
+}
+
+void OLED_Show_Int(uint8_t page, uint8_t column, int32_t value, uint8_t width,
+                   uint8_t scale) {
+  char buf[16];
+  uint8_t negative = 0;
+  uint32_t magnitude;
+  uint8_t len;
+
+  /// INT32_MIN 取反会溢出，先 +1 再取反（Avoid the INT32_MIN overflow）.
+  if (value < 0) {
+    negative = 1;
+    magnitude = (uint32_t)(-(value + 1)) + 1u;
+  } else {
+    magnitude = (uint32_t)value;
+  }
+
+  len = OLED_Format_Signed(buf, (uint8_t)sizeof(buf), negative, magnitude);
+  OLED_Pad(buf, len, width, (uint8_t)sizeof(buf));
+  OLED_Show_String(page, column, buf, scale);
+}
+
+void OLED_Show_Float(uint8_t page, uint8_t column, float value, uint8_t decimals,
+                     uint8_t width, uint8_t scale) {
+  char buf[24];
+  uint32_t pow10 = 1;
+  uint32_t scaled;
+  uint32_t int_part;
+  uint32_t frac_part;
+  uint8_t negative = 0;
+  uint8_t len;
+
+  /// NaN / Inf / 超范围一律显示 "---"（Reject NaN, Inf and huge values）.
+  if (!(value >= -999999.0f && value <= 999999.0f)) {
+    OLED_Show_String(page, column, "   ---", scale);
+    return;
+  }
+  if (decimals > 4) {
+    decimals = 4;
+  }
+
+  if (value < 0.0f) {
+    negative = 1;
+    value = -value;
+  }
+
+  for (uint8_t i = 0; i < decimals; i++) {
+    pow10 *= 10u;
+  }
+
+  /// value * pow10 必须落在 uint32 内，否则 float->整数转换是未定义行为.
+  /// 留出四舍五入的余量，超限时按 "---" 显示（Guarding against the uint32 overflow）.
+  if (!((value * (float)pow10) <= 4294000000.0f)) {
+    OLED_Show_String(page, column, "   ---", scale);
+    return;
+  }
+
+  scaled = (uint32_t)(value * (float)pow10 + 0.5f);
+  int_part = scaled / pow10;
+  frac_part = scaled % pow10;
+
+  len = OLED_Format_Signed(buf, (uint8_t)sizeof(buf), negative, int_part);
+
+  /// 小数部分按固定位数补前导 0（Keep the leading zeros of the fraction）.
+  if (decimals > 0 && (uint16_t)(len + decimals + 2u) <= sizeof(buf)) {
+    buf[len++] = '.';
+    for (uint8_t i = decimals; i > 0; i--) {
+      uint32_t divisor = 1;
+      for (uint8_t j = 1; j < i; j++) {
+        divisor *= 10u;
+      }
+      buf[len++] = (char)('0' + (frac_part / divisor) % 10u);
+    }
+    buf[len] = '\0';
+  }
+
+  OLED_Pad(buf, len, width, (uint8_t)sizeof(buf));
+  OLED_Show_String(page, column, buf, scale);
+}
+
+void OLED_Printf(uint8_t page, uint8_t column, uint8_t scale, const char *format, ...) {
+  char buf[32];
+  va_list args;
+
+  va_start(args, format);
+  (void)vsnprintf(buf, sizeof(buf), format, args);
+  va_end(args);
+
+  OLED_Show_String(page, column, buf, scale);
+}

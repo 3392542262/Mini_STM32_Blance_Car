@@ -33,7 +33,9 @@ enable_language(C ASM)
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME}
-    Core/Inc/motor.h)
+    Core/Inc/motor.h
+    Core/Inc/key.h
+    Core/Inc/oled.h)
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
@@ -47,6 +49,8 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/motor.c
+    Core/Src/key.c
+    Core/Src/oled.c
 )
 
 # Add include paths

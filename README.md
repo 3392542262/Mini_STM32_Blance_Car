@@ -31,18 +31,18 @@ flowchart LR
 
 ### B570 原板引脚分配（参考）
 
-以下引脚来自 WHEELTEC B570 资源分配表与原理图。**当前工程只使用 USART3（PB10/PB11）连接四路串口驱动板，其余外设暂未配置。**
+以下引脚来自 WHEELTEC B570 资源分配表与原理图。**当前工程使用 USART3（PB10/PB11）连接四路串口驱动板，并已驱动用户按键（PA5）与 OLED（PA15/PB3/PB4/PB5），其余外设暂未配置。**
 
 | 引脚 | 功能 | 原外设 / 说明 | 当前状态 |
 | --- | --- | --- | --- |
 | `PB10` / `PB11` | 蓝牙模块串口 | USART3 | ✅ 已改作四路驱动板串口 |
 | `PA9` / `PA10` | MicroUSB 串口 | USART1（CH340） | ⏳ 暂未配置 |
 | `PA4` | LED | GPIO | ⏳ 暂未配置 |
-| `PA5` | 用户按键 | GPIO | ⏳ 暂未配置 |
-| `PA15` | OLED DC | GPIO | ⏳ 暂未配置 |
-| `PB3` | OLED RES | GPIO | ⏳ 暂未配置 |
-| `PB4` | OLED SDA | GPIO | ⏳ 暂未配置 |
-| `PB5` | OLED SCL | GPIO | ⏳ 暂未配置 |
+| `PA5` | 用户按键 | GPIO | ✅ 已驱动（`key.c`） |
+| `PA15` | OLED DC | GPIO | ✅ 已驱动（`oled.c`，需关 JTAG） |
+| `PB3` | OLED RES | GPIO | ✅ 已驱动（`oled.c`，需关 JTAG） |
+| `PB4` | OLED SDA | GPIO | ✅ 已驱动（`oled.c`，需关 JTAG） |
+| `PB5` | OLED SCL | GPIO | ✅ 已驱动（`oled.c`） |
 | `PA12` | MPU6050 INT | EXTI | ⏳ 暂未配置 |
 | `PB8` / `PB9` | MPU6050 软件 IIC | SCL / SDA | ⏳ 暂未配置 |
 | `PA0` / `PA1` | 左轮编码器 | TIM2_CH1 / TIM2_CH2 | ⏳ 暂未配置（现由驱动板采集） |
@@ -60,9 +60,141 @@ flowchart LR
 
 - 原蓝牙模块接在 USART3，本工程将该串口改为四路驱动板通信，因此蓝牙功能不可同时使用
 - 原电机 PWM/方向与编码器引脚均不再由 STM32 使用，由串口驱动板负责
-- OLED、按键、LED、MPU6050、电压检测、超声波等尚未在 CubeMX 中初始化
+- 按键与 OLED 的 GPIO 由驱动自己初始化（`Key_Init()` / `OLED_Init()`），没有写进 CubeMX 的 `MX_GPIO_Init()`，所以重新生成代码不会把它们覆盖掉
+- LED、MPU6050、电压检测、超声波等仍未配置
 
 原理图与资源分配表见 [`docs/schematics/`](docs/schematics/)。
+
+## 按键与 OLED
+
+按键（PA5）与 OLED（SSD1306 128×64，四线 SPI）两部分的驱动已经写好，互相独立，可以只用一个。
+
+### 硬件连接
+
+| STM32F103 | OLED 模块（7 针） | 说明 |
+| --- | --- | --- |
+| `3V3` | `VCC` | 3.3V 供电 |
+| `GND` | `GND` | 共地 |
+| `PB5` | `SCL` / `D0` | 软件 SPI 时钟 |
+| `PB4` | `SDA` / `D1` | 软件 SPI 数据（MOSI） |
+| `PB3` | `RES` | 复位，低电平有效 |
+| `PA15` | `DC` | 0 = 命令，1 = 显存数据 |
+| — | `CS` | 模块无 CS 或 CS 接地 |
+
+| STM32F103 | 按键 | 说明 |
+| --- | --- | --- |
+| `PA5` | 按键一端 | 内部上拉，另一端接 `GND`，按下读到低电平 |
+
+> ⚠️ **必要前提**：`PA15`、`PB3`、`PB4` 上电默认是 JTAG 的 `JTDI`/`JTDO`/`NJTRST`。
+> `OLED_Init()` 里已经调用 `__HAL_AFIO_REMAP_SWJ_NOJTAG()` 关掉 JTAG 把它们释放成普通 GPIO，
+> 关掉后 **SWD（PA13/PA14）仍然可以正常下载调试**，不用担心变砖。
+
+### 怎么用（三步）
+
+**1. 初始化**：在 `main()` 外设初始化之后调用一次
+
+```c
+Key_Init();    // 配置 PA5 为上拉输入
+OLED_Init();   // 配置 4 个 OLED 引脚、关 JTAG、复位、发初始化序列、清屏
+```
+
+**2. 显示**：按「页」定位，一页 8 行像素，共 8 页（0~7），每页 16 个 ASCII 字符
+
+```c
+OLED_Clear();                              // 清屏
+OLED_Show_String(0, 0, "Mini Balance Car", 1);   // 第 0 页，第 0 列，1 倍字
+OLED_Show_String(1, 0, "Speed:", 1);             // 第 1 页
+OLED_Show_Float(1, 56, 152.5f, 1, 6, 1);          // 1 位小数，占 6 字符宽
+OLED_Show_Int(2, 0, -320, 4, 1);                 // 整数，左补空格到 4 位
+OLED_Printf(3, 0, 1, "t=%lu ms", HAL_GetTick()); // 用法同 printf，最长 31 字符
+OLED_Clear_Page(4);                              // 只清第 4 页
+OLED_Show_Char(5, 0, 'A', 2);                    // 2 倍放大（占 2 页）
+```
+
+- `page`：0~7，从上到下
+- `column`：0~127，**像素列**；1 倍字一个字符占 8 列，第 n 个字符的起点是 `n*8`
+  （例如 `"Press:"` 占 0~47 列，后面的数字从 56 列开始画）
+- `scale`：1~4，放大倍数；2 倍字占 `8*2` 列、`2` 页
+- 字库是 **ASCII（0x20~0x7E）**，中文会显示成 `?`
+
+**3. 扫描按键**：在主循环里反复调用，**不要用 `HAL_Delay()` 卡住主循环**，否则按键会漏采样
+
+```c
+while (1) {
+  switch (Key_Scan()) {
+    case KEY_EVENT_PRESS:      /* 消抖后的按下 */      break;
+    case KEY_EVENT_RELEASE:    /* 消抖后的松开 */      break;
+    case KEY_EVENT_LONG_PRESS: /* 按住满 800 ms */     break;
+    case KEY_EVENT_REPEAT:     /* 长按后每 150 ms 连发 */ break;
+    default: break;            /* KEY_EVENT_NONE */
+  }
+}
+```
+
+- 非阻塞，内部用 `HAL_GetTick()` 做 20 ms 消抖，主循环 5~10 ms 跑一圈就够灵敏
+- `KEY_EVENT_PRESS` / `KEY_EVENT_RELEASE` 成对出现；长按会先给 `PRESS`，再给 `LONG_PRESS`，之后周期给 `REPEAT`
+- 只想知道「此刻按下没有」也可以直接用 `Key_Is_Pressed()`
+
+### 接口速查
+
+```c
+/* oled.h */
+void OLED_Init(void);
+void OLED_Display_On(void);
+void OLED_Display_Off(void);
+void OLED_Set_Contrast(uint8_t contrast);      // 0~255
+void OLED_Clear(void);
+void OLED_Clear_Page(uint8_t page);
+void OLED_Set_Cursor(uint8_t page, uint8_t column);
+void OLED_Show_Char(uint8_t page, uint8_t column, char ch, uint8_t scale);
+void OLED_Show_String(uint8_t page, uint8_t column, const char *str, uint8_t scale);
+void OLED_Show_Int(uint8_t page, uint8_t column, int32_t value, uint8_t width, uint8_t scale);
+void OLED_Show_Float(uint8_t page, uint8_t column, float value, uint8_t decimals,
+                     uint8_t width, uint8_t scale);
+void OLED_Printf(uint8_t page, uint8_t column, uint8_t scale, const char *format, ...);
+
+/* key.h */
+typedef enum { KEY_EVENT_NONE = 0, KEY_EVENT_PRESS, KEY_EVENT_RELEASE,
+               KEY_EVENT_LONG_PRESS, KEY_EVENT_REPEAT } KeyEvent;
+void     Key_Init(void);
+KeyEvent Key_Scan(void);
+uint8_t  Key_Is_Pressed(void);
+```
+
+驱动直接写显存，不占 1KB 的显存缓冲，`OLED_Clear()` 一次约几毫秒，可以放心在主循环里调用。
+
+### 可调参数
+
+`Core/Src/oled.c` 顶部：
+
+| 宏 | 默认 | 作用 |
+| --- | --- | --- |
+| `OLED_SCK_PIN` / `OLED_SDA_PIN` / `OLED_RES_PIN` / `OLED_DC_PIN` | `PB5` / `PB4` / `PB3` / `PA15` | 换引脚只改这里 |
+| `OLED_SEGMENT_REMAP` | 1 | 画面左右镜像时改成 0 |
+| `OLED_COM_SCAN_DEC` | 1 | 画面上下颠倒时改成 0 |
+| `OLED_CHARGE_PUMP` | 1 | 模块自带升压；屏不亮时先确认这里是 1 |
+
+`Core/Src/key.c` 顶部：
+
+| 宏 | 默认 | 作用 |
+| --- | --- | --- |
+| `KEY_PIN` | `PA5` | 按键引脚 |
+| `KEY_ACTIVE_LEVEL` | 0 | 0 = 按下为低电平（内部上拉），1 = 按下为高电平（内部下拉） |
+| `KEY_DEBOUNCE_MS` | 20 | 消抖时间 |
+| `KEY_LONG_PRESS_MS` | 800 | 长按门限 |
+| `KEY_REPEAT_MS` | 150 | 长按连发周期 |
+
+### 排错
+
+| 现象 | 处理 |
+| --- | --- |
+| 屏全黑 | 先查 `VCC`/`GND`；再把 `OLED_Set_Contrast()` 调到 `0xFF` 试；确认 `OLED_CHARGE_PUMP` 为 1 |
+| 屏是亮的但没字 | 八成是 `DC`/`RES` 接反或 `PB3`/`PA15` 没被释放成 GPIO —— 确认 `OLED_Init()` 里调用了 `__HAL_AFIO_REMAP_SWJ_NOJTAG()` |
+| 文字上下颠倒 | `OLED_COM_SCAN_DEC` 改 0 |
+| 文字左右镜像 | `OLED_SEGMENT_REMAP` 改 0 |
+| 花屏/乱码 | `SCL`/`SDA` 接反，或杜邦线太长、接触不良；软件 SPI 不需要额外上拉 |
+| 按键没反应 | 万用表量按下时 PA5 是否被拉到 GND；若板上是按键接 3V3，把 `KEY_ACTIVE_LEVEL` 改成 1 |
+| 按键偶尔连跳 | 主循环里加了 `HAL_Delay()` 导致采样太慢，或者把 `KEY_DEBOUNCE_MS` 加大到 30~50 |
 
 ## 通信协议
 
@@ -103,12 +235,16 @@ flowchart LR
 Core/
 ├── Inc/
 │   ├── motor.h        # 电机控制接口与通道定义
+│   ├── key.h          # 按键事件与接口
+│   ├── oled.h         # OLED 显示接口
 │   ├── usart.h        # USART3 (PB10/PB11) 句柄
 │   └── dma.h
 └── Src/
     ├── motor.c        # 协议发送、接收解析、编码器读取
+    ├── key.c          # PA5 按键扫描、消抖、长按/连发
+    ├── oled.c         # SSD1306 四线软件 SPI 驱动与 8x8 字库
     ├── usart.c        # USART3 115200 8N1
-    └── main.c         # 初始化与测试流程
+    └── main.c         # 初始化与按键 + OLED 演示流程
 ```
 
 ### 电机接口
@@ -252,24 +388,34 @@ VS Code 任务定义在 `.vscode/tasks.json`：
 
 ## 测试流程
 
-`main.c` 内置一个循环测试：
+`main.c` 内置一个按键 + OLED 演示（电机部分只做 `Motor_Init()`，不下发运动指令，烧录后车轮不会转）：
 
 ```text
-前进 150 mm/s  → 2 s
-停止           → 1 s
-后退 150 mm/s  → 2 s
-停止           → 1 s
+OLED 开机画面：
+  Mini Balance Car
+  F103 + SSD1306
+  KEY: PA5
+  press to count
+
+主循环：
+  每轮调用 Key_Scan()
+    短按 → Press 计数 +1
+    长按 800 ms → Long 计数 +1，之后每 150 ms 连发
+  每 100 ms 刷新一次：
+    Press: <短按次数>
+    Long : <长按次数>
+    Up   : <上电秒数>
+    KEY  DOWN / KEY  UP
 ```
 
 同时在调试器中可观察：
 
 ```c
-test_left_enc / test_right_enc       // 累计编码器
-test_left_delta / test_right_delta   // 10ms 增量
-test_left_speed / test_right_speed   // mm/s
+test_key_press_count / test_key_long_count  // 按键计数
+test_left_enc / test_right_enc              // 累计编码器
+test_left_delta / test_right_delta          // 10ms 增量
+test_left_speed / test_right_speed          // mm/s
 ```
-
-⚠️ 烧录后电机会自动转动，测试前请将车轮架空。
 
 ## 注意事项
 
@@ -277,3 +423,6 @@ test_left_speed / test_right_speed   // mm/s
 2. `HAL_UART_RxCpltCallback()` 目前由 `motor.c` 独占；若增加其他串口，需在回调中判断 `Instance`
 3. USART3 的 DMA 已由 CubeMX 配置，但当前接收使用中断模式，DMA 未启用
 4. 驱动板配置保存在其 Flash 中，更换电机参数后需重新发送配置指令
+5. `OLED_Init()` 会关闭 JTAG 以释放 `PA15`/`PB3`/`PB4`，SWD 仍可用；如果以后要用 JTAG 调试，需要改回 `__HAL_AFIO_REMAP_SWJ_ENABLE()`
+6. OLED 直接写显存，帧率高时 `OLED_Clear()` + 全屏重绘会占用较多 CPU 时间；刷新频率控制在 10~30 Hz 即可
+7. `Key_Scan()` 依赖 `HAL_GetTick()`，主循环里不要长时间 `HAL_Delay()`，否则按键采样变慢

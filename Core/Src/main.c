@@ -24,7 +24,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "key.h"
 #include "motor.h"
+#include "oled.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -52,6 +54,13 @@ volatile int32_t test_left_delta;
 volatile int32_t test_right_delta;
 volatile float left_speed;
 volatile float right_speed;
+
+/// 按键与 OLED 演示计数，调试器可直接观察（Key demo counters）.
+volatile uint32_t test_key_press_count;
+volatile uint32_t test_key_long_count;
+
+/// OLED 刷新节拍（Display refresh tick）.
+static uint32_t s_oled_refresh_tick;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -98,15 +107,51 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
   Motor_Init();
+  Key_Init();
+  OLED_Init();
+
+  /// 开机画面（Boot screen）.
+  OLED_Show_String(0, 0, "Mini Balance Car", 1);
+  OLED_Show_String(1, 0, "F103 + SSD1306", 1);
+  OLED_Show_String(2, 0, "KEY: PA5", 1);
+  OLED_Show_String(3, 0, "press to count", 1);
+  s_oled_refresh_tick = HAL_GetTick();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  uint32_t stop_tick = 0;
-
   while (1)
   {
+    /// 按键轮询，必须每个循环都调用一次（Poll the key every iteration）.
+    KeyEvent key_event = Key_Scan();
+    uint32_t now = HAL_GetTick();
 
+    if (key_event == KEY_EVENT_PRESS) {
+      test_key_press_count++;
+      OLED_Show_String(3, 0, "key pressed!  ", 1);
+    } else if (key_event == KEY_EVENT_LONG_PRESS) {
+      test_key_long_count++;
+      OLED_Show_String(3, 0, "key long hold ", 1);
+    } else if (key_event == KEY_EVENT_RELEASE) {
+      OLED_Show_String(3, 0, "press to count", 1);
+    }
+
+    /// 每 100 ms 刷新一次动态数据（Refresh the live data every 100 ms）.
+    if ((now - s_oled_refresh_tick) >= 100U) {
+      s_oled_refresh_tick = now;
+
+      /// 标签 6 个字符 = 48 像素列，数字从第 7 个字符的位置（56 列）开始画.
+      OLED_Show_String(4, 0, "Press:", 1);
+      OLED_Show_Int(4, 56, (int32_t)test_key_press_count, 6, 1);
+
+      OLED_Show_String(5, 0, "Long :", 1);
+      OLED_Show_Int(5, 56, (int32_t)test_key_long_count, 6, 1);
+
+      OLED_Show_String(6, 0, "Up   :", 1);
+      OLED_Show_Int(6, 56, (int32_t)(now / 1000U), 6, 1);
+
+      OLED_Show_String(7, 0, Key_Is_Pressed() ? "KEY  DOWN" : "KEY  UP  ", 1);
+    }
 
     /* USER CODE END WHILE */
 
