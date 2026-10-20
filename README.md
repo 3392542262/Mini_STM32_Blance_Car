@@ -188,7 +188,7 @@ uint8_t  Key_Is_Pressed(void);
 
 | 现象 | 处理 |
 | --- | --- |
-| 屏全黑 | 先查 `VCC`/`GND`；再把 `OLED_Set_Contrast()` 调到 `0xFF` 试；确认 `OLED_CHARGE_PUMP` 为 1 |
+| 屏全黑 | 先查 `VCC`/`GND`；7 针模块的 `CS` **必须接 GND**（悬空一定不亮）；再把 `OLED_Set_Contrast()` 调到 `0xFF` 试；确认 `OLED_CHARGE_PUMP` 为 1 |
 | 屏是亮的但没字 | 八成是 `DC`/`RES` 接反或 `PB3`/`PA15` 没被释放成 GPIO —— 确认 `OLED_Init()` 里调用了 `__HAL_AFIO_REMAP_SWJ_NOJTAG()` |
 | 文字上下颠倒 | `OLED_COM_SCAN_DEC` 改 0 |
 | 文字左右镜像 | `OLED_SEGMENT_REMAP` 改 0 |

@@ -391,11 +391,10 @@ void OLED_Clear(void) {
 }
 
 void OLED_Set_Cursor(uint8_t page, uint8_t column) {
-  if (page >= OLED_PAGE_COUNT) {
-    page = OLED_PAGE_COUNT - 1;
-  }
-  if (column >= OLED_WIDTH) {
-    column = OLED_WIDTH - 1;
+  /// 越界直接忽略，不夹取到边缘，避免调用方写错坐标时覆盖最后一行/列
+  /// （Ignore out-of-range coordinates instead of clamping them）.
+  if (page >= OLED_PAGE_COUNT || column >= OLED_WIDTH) {
+    return;
   }
 
   OLED_Write_Command((uint8_t)(0xB0 | page));
@@ -412,8 +411,12 @@ void OLED_Show_Char(uint8_t page, uint8_t column, char ch, uint8_t scale) {
   if (page >= OLED_PAGE_COUNT || column >= OLED_WIDTH) {
     return;
   }
-  if (scale == 0 || scale > OLED_MAX_SCALE) {
+  /// 放大倍数夹到 1~OLED_MAX_SCALE，传 0 或超范围都能得到可预期的结果
+  /// （Clamp the scale factor instead of falling back to 1）.
+  if (scale == 0) {
     scale = 1;
+  } else if (scale > OLED_MAX_SCALE) {
+    scale = OLED_MAX_SCALE;
   }
   if (code < 0x20 || code > 0x7E) {
     code = (uint8_t)'?';
@@ -431,7 +434,7 @@ void OLED_Show_Char(uint8_t page, uint8_t column, char ch, uint8_t scale) {
     OLED_Set_Cursor((uint8_t)(page + page_offset), column);
     written = 0;
 
-    for (uint8_t col = 0; col < 8; col++) {
+    for (uint8_t col = 0; col < 8 && written < max_columns; col++) {
       uint8_t byte = 0;
 
       for (uint8_t row = 0; row < 8; row++) {
@@ -442,10 +445,7 @@ void OLED_Show_Char(uint8_t page, uint8_t column, char ch, uint8_t scale) {
         }
       }
 
-      for (uint8_t repeat = 0; repeat < scale; repeat++) {
-        if (written >= max_columns) {
-          break;
-        }
+      for (uint8_t repeat = 0; repeat < scale && written < max_columns; repeat++) {
         OLED_Write_Data(byte);
         written++;
       }
@@ -459,8 +459,11 @@ void OLED_Show_String(uint8_t page, uint8_t column, const char *str, uint8_t sca
   if (str == NULL) {
     return;
   }
-  if (scale == 0 || scale > OLED_MAX_SCALE) {
+  /// 放大倍数夹到 1~OLED_MAX_SCALE（Clamp the scale factor）.
+  if (scale == 0) {
     scale = 1;
+  } else if (scale > OLED_MAX_SCALE) {
+    scale = OLED_MAX_SCALE;
   }
 
   cursor = column;
@@ -529,6 +532,11 @@ void OLED_Show_Float(uint8_t page, uint8_t column, float value, uint8_t decimals
   scaled = (uint32_t)(value * (float)pow10 + 0.5f);
   int_part = scaled / pow10;
   frac_part = scaled % pow10;
+
+  /// 四舍五入后整体为 0 时不加负号，避免显示成 "-0.0"（Avoid printing "-0.0"）.
+  if (scaled == 0u) {
+    negative = 0;
+  }
 
   len = OLED_Format_Signed(buf, (uint8_t)sizeof(buf), negative, int_part);
 

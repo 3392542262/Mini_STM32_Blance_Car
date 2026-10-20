@@ -93,6 +93,13 @@ KeyEvent Key_Scan(void) {
     return KEY_EVENT_RELEASE;
   }
 
+  /// 电平刚变化、还没稳定满消抖时间时不产生长按/连发事件，
+  /// 否则手指松开的那 20 ms 抖动窗口里可能多报一次 REPEAT
+  /// （Wait for the debounce to settle before long press / repeat）.
+  if (s_sample != s_pressed) {
+    return KEY_EVENT_NONE;
+  }
+
   if (!s_pressed) {
     return KEY_EVENT_NONE;
   }
