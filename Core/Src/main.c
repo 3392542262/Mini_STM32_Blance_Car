@@ -110,10 +110,11 @@ int main(void)
   Key_Init();
   OLED_Init();
 
-  /// 开机画面（Boot screen）.
-  OLED_Show_String(0, 0, "Mini Balance Car", 1);
-  OLED_Show_String(1, 0, "F103 + SSD1306", 1);
-  OLED_Show_String(2, 0, "KEY: PA5", 1);
+  /// 开机画面：第 0 页居中显示 helloworld（Boot screen, "helloworld" centered）.
+  /// "helloworld" 10 个字符 × 8 列 = 80 列，居中起点 (128-80)/2 = 24.
+  OLED_Show_String(0, 24, "helloworld", 1);
+  OLED_Show_String(1, 0, "Mini Balance Car", 1);
+  OLED_Show_String(2, 0, "F103 + SSD1306", 1);
   OLED_Show_String(3, 0, "press to count", 1);
   s_oled_refresh_tick = HAL_GetTick();
   /* USER CODE END 2 */

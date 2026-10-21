@@ -3,8 +3,8 @@
   "tasks": [
     {
       "label": "Build",
-      "type": "shell",
-      "command": "powershell.exe",
+      "type": "process",
+      "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       "args": [
         "-NoProfile",
         "-ExecutionPolicy",
@@ -20,8 +20,8 @@
     },
     {
       "label": "Flash (OpenOCD)",
-      "type": "shell",
-      "command": "powershell.exe",
+      "type": "process",
+      "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       "args": [
         "-NoProfile",
         "-ExecutionPolicy",

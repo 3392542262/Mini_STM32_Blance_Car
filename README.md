@@ -310,12 +310,23 @@ typedef enum {
 | 组件 | 说明 |
 | --- | --- |
 | VS Code + STM32 VS Code 扩展 | 提供 `cube-cmake`（推荐） |
-| CMake ≥ 3.22 + Ninja | 没有 `cube-cmake` 时的回退方案 |
+| CMake ≥ 4.4 + Ninja | 没有 `cube-cmake` 时的回退方案；**不要用 3.31.x**，它在含中文的路径下会静默崩溃（退出码 127），4.4.x 已修复 |
 | `arm-none-eabi-gcc` | GNU Arm 工具链，需在 PATH 或常见安装目录 |
 | OpenOCD | 推荐 `winget install xpack-dev-tools.openocd-xpack` |
 | 调试器 | CMSIS-DAP；ST-Link 需设置 `OPENOCD_INTERFACE` |
 
-`tools/build.ps1` 会自动查找 `cube-cmake`、`cmake`、`arm-none-eabi-gcc` 和 `openocd` 的常见安装位置，找不到时输出安装提示。
+`tools/build.ps1` 会自动查找 `cube-cmake`、`cmake`、`arm-none-eabi-gcc` 和 `openocd` 的常见安装位置，找不到时输出安装提示。本机实际使用的路径：
+
+| 工具 | 位置 |
+| --- | --- |
+| `arm-none-eabi-gcc` | `%USERPROFILE%\.eide\tools\gcc_arm\bin`（`build.ps1` 会自动识别） |
+| CMake | `%LOCALAPPDATA%\stm32cube\bundles\cmake\<版本>\bin` |
+| Ninja | `%LOCALAPPDATA%\stm32cube\bundles\ninja\<版本>\bin` |
+| OpenOCD | `%USERPROFILE%\.eide\tools\openocd-<版本>\bin`（`flash.ps1` 会自动识别） |
+
+> `.vscode/tasks.json` 里两个任务用的是 `"type": "process"` + PowerShell 的**完整路径**。
+> 不用 `"type": "shell"` 是因为 VS Code 会把命令塞进 `powershell.exe -Command "..."`，
+> 而工程路径含中文（`七组田戴福实训日志`），这一层字符串传递会把路径编码搞坏，任务以退出码 1 结束。
 
 ### 一键编译 + 烧录（Ctrl+Shift+B）
 
@@ -392,9 +403,9 @@ VS Code 任务定义在 `.vscode/tasks.json`：
 
 ```text
 OLED 开机画面：
+  helloworld        ← 第 0 页居中，用来确认 OLED 已点亮
   Mini Balance Car
   F103 + SSD1306
-  KEY: PA5
   press to count
 
 主循环：
